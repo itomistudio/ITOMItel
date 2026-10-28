@@ -235,10 +235,14 @@ def chunks(data: bytes, size: int) -> list[bytes]:
     while i < n:
         if data[i] == 0x1B:                          # skip a whole escape sequence
             j = i + 2
-            if i + 1 < n and data[i + 1] == 0x5B:     # CSI: ESC [ parameters final-byte
-                while j < n and not 0x40 <= data[j] <= 0x7E:
+            if i + 1 < n:
+                nxt = data[i + 1]
+                if nxt == 0x5B:                       # CSI: ESC [ parameters final-byte
+                    while j < n and not 0x40 <= data[j] <= 0x7E:
+                        j += 1
                     j += 1
-                j += 1
+                elif nxt == 0x59:                     # VT52: ESC Y row col (two bytes follow)
+                    j = i + 4
             i = min(j, n)
         else:
             i += 1

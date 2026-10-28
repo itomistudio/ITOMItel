@@ -2,6 +2,7 @@
 import unittest
 
 from totem.app import (ANNUL, CORREZIONE, DESTRA, INDICE, INVIO, SEGUENTE, SINISTRA, App, render)
+from totem.serial_cli import ingest
 from totem.terminal import (KeyDecoder, SerialTerminal, encode_screen,
                             estimate_seconds, to_ascii)
 
@@ -178,6 +179,36 @@ class ArrowKeyTests(unittest.TestCase):
         app.key("5")                                             # search: typing is untouched
         app.key("a"); app.key(DESTRA); app.key("b")
         self.assertIn("> ab_", "\n".join(app.screen()))
+
+
+class IngestTests(unittest.TestCase):
+    """The main-loop decision between feed() and flush(). Flushing on every empty read
+    cut multi-byte keys in half when their first byte reached pyserial on its own."""
+
+    def test_bytes_feed_the_decoder_and_mark_the_last_byte_time(self):
+        d = KeyDecoder()
+        keys, last = ingest(d, b"a", now=10.0, last_byte=9.9)
+        self.assertEqual(keys, ["a"])
+        self.assertEqual(last, 10.0)
+
+    def test_empty_read_within_idle_window_does_not_flush(self):
+        d = KeyDecoder()
+        d.feed(b"\x1b")                                        # a lone prefix stays in the buffer
+        keys, last = ingest(d, b"", now=10.1, last_byte=10.0)   # only 100 ms passed
+        self.assertEqual(keys, [])
+        self.assertEqual(last, 10.0)                            # last_byte unchanged
+        self.assertEqual(d.feed(b"[D"), [SINISTRA])             # the ESC is still there, key completes
+
+    def test_empty_read_after_idle_window_flushes_once(self):
+        d = KeyDecoder()
+        d.feed(b"\x1b")
+        keys, last = ingest(d, b"", now=10.4, last_byte=10.0)   # 400 ms, a real pause
+        self.assertEqual(keys, [])
+        self.assertEqual(d.take_unknown(), [b"\x1b"])
+        # last_byte is now 10.4 so another empty read at 10.5 does not flush again
+        keys, last2 = ingest(d, b"", now=10.5, last_byte=last)
+        self.assertEqual(keys, [])
+        self.assertEqual(last2, last)
 
 
 class AppOverSerialTests(unittest.TestCase):

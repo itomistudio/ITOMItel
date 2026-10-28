@@ -66,6 +66,19 @@ class ChunkTests(unittest.TestCase):
         self.assertTrue(all(s == 24 for s in sizes[:-1]))
         self.assertEqual(sum(sizes), 1000)
 
+    def test_a_vt52_cursor_jump_is_never_cut_in_half(self):
+        # ESC Y row col is four bytes; a piece must not end between them, or the
+        # terminal would eat the next write as the missing row/col coordinates.
+        jump = b"\x1bY" + bytes([32 + 5, 32 + 10])
+        data = b"x" * 20 + jump + b"y" * 20
+        for size in range(5, 25):
+            for piece in chunks(data, size):
+                self.assertFalse(piece.endswith(b"\x1b"), f"size={size}: {piece!r}")
+                self.assertFalse(piece.endswith(b"\x1bY"), f"size={size}: {piece!r}")
+                self.assertFalse(piece.endswith(b"\x1bY" + bytes([32 + 5])),
+                                 f"size={size}: {piece!r}")
+            self.assertEqual(b"".join(chunks(data, size)), data)
+
 
 class DrawingTests(unittest.TestCase):
     def test_without_abort_the_screen_goes_out_in_one_write_as_before(self):

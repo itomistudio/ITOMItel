@@ -22,6 +22,24 @@ from .terminal import (KEY_NAMES, KeyDecoder, KeyWatcher, PROFILES, SerialTermin
                        open_port, save_keymap, to_ascii)
 
 
+IDLE_FLUSH_SECONDS = 0.3
+
+
+def ingest(decoder, data: bytes, now: float, last_byte: float,
+           idle: float = IDLE_FLUSH_SECONDS) -> tuple[list[str], float]:
+    """Decide what to do with a serial read. New bytes are fed to the decoder;
+    an empty read flushes only after a real pause, so a multi-byte key split
+    across two reads at 1200 baud is not cut in half.
+
+    Returns the keys found and the updated last_byte timestamp.
+    """
+    if data:
+        return decoder.feed(data), now
+    if now - last_byte > idle:
+        return decoder.flush(), now
+    return [], last_byte
+
+
 def add_port_args(ap) -> None:
     ap.add_argument("--port", required=True,
                     help="serial device, e.g. /dev/cu.usbserial-0001")
@@ -143,14 +161,16 @@ def cmd_serial(args) -> None:
     secs = term.try_draw(app.screen(), full=True, abort=interrupted)
     print(f"[disegno schermata: ~{secs:.1f}s]", file=sys.stderr)
     last = time.monotonic()
+    last_byte = last
     try:
         while True:
             data = term.read()
+            now = time.monotonic()
             keys = watcher.take()                # first the commands that came during a drawing
-            keys += decoder.feed(data) if data else decoder.flush()
+            more, last_byte = ingest(decoder, data, now, last_byte)
+            keys += more
             for seq in decoder.take_unknown():
                 print(f"[sequenza non riconosciuta: {seq.hex(' ')}]", file=sys.stderr)
-            now = time.monotonic()
             # A burst of garbage while we talk faster than 1200 baud: the terminal was probably
             # switched off and on and is back at 1200. Ask it again for the saved speed.
             if decoder.take_dropped() >= 4 and term.baud != 1200:
